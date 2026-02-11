@@ -1,0 +1,28 @@
+
+
+
+# Compiled Java classes
+*.class
+
+# Native build artifacts
+*.dylib
+*.so
+*.dll
+
+# macOS files
+.DS_Store
+
+# VSCode settings (optional)
+.vscode/
+
+# Generated output files
+results.csv
+
+# External dependencies (cloned repos, cubiomes source, etc.)
+external/
+
+# Native build directory (if you compile inside native/)
+native/*.o
+native/*.dylib
+native/*.so
+native/*.dll
