@@ -337,7 +337,7 @@ public class AFKSpotFinder {
         private static final long EMPTY = 0L;
 
         private long[] keys;
-        private Object[] vals;
+        private V[] vals;
         private int size;
         private int mask;
         private int maxFill;
@@ -346,7 +346,10 @@ public class AFKSpotFinder {
             int cap = 1;
             while (cap < expected * 2) cap <<= 1;
             keys = new long[cap];
-            vals = new Object[cap];
+            // We store values in a generic array; this cast is safe because we only ever insert V.
+            @SuppressWarnings("unchecked")
+            V[] tmp = (V[]) new Object[cap];
+            vals = tmp;
             mask = cap - 1;
             maxFill = (int) (cap * 0.65);
         }
@@ -375,25 +378,28 @@ public class AFKSpotFinder {
 
         ArrayList<V> values() {
             ArrayList<V> out = new ArrayList<>(size);
-            for (Object v : vals) {
-                if (v != null) out.add((V) v);
+            for (V v : vals) {
+                if (v != null) out.add(v);
             }
             return out;
         }
 
         private void rehash(int newCap) {
             long[] oldK = keys;
-            Object[] oldV = vals;
+            V[] oldV = vals;
 
             keys = new long[newCap];
-            vals = new Object[newCap];
+            // We store values in a generic array; this cast is safe because we only ever insert V.
+            @SuppressWarnings("unchecked")
+            V[] tmp = (V[]) new Object[newCap];
+            vals = tmp;
             mask = newCap - 1;
             maxFill = (int) (newCap * 0.65);
             size = 0;
 
             for (int i = 0; i < oldK.length; i++) {
                 long k = oldK[i];
-                Object v = oldV[i];
+                V v = oldV[i];
                 if (k != EMPTY && v != null) {
                     int pos = (int) mix32(k) & mask;
                     while (keys[pos] != EMPTY) {

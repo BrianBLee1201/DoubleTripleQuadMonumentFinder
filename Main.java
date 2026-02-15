@@ -76,12 +76,10 @@ public class Main {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 4) {
+        if (args.length < 5) {
             System.err.println("Usage:");
-            System.err.println("  java Main <seed> <double|triple|quad> <rangeBlocks> <threads>");
             System.err.println("  java Main <seed> <double|triple|quad> <rangeBlocks> <excludeRadius> <threads>");
             System.err.println("Examples:");
-            System.err.println("  java Main 123456789 double 20000 4");
             System.err.println("  java Main 123456789 double 20000 10000 4");
             System.exit(1);
         }
@@ -89,8 +87,8 @@ public class Main {
         long seed = parseLongStrict(args[0], "seed");
         Type type = Type.from(args[1]);
         int rangeBlocks = parseIntStrict(args[2], "rangeBlocks");
-        int excludeRadius = args.length >= 5 ? parseIntStrict(args[3], "excludeRadius") : 0;
-        int threads = args.length >= 5 ? parseIntStrict(args[4], "threads") : parseIntStrict(args[3], "threads");
+        int excludeRadius = parseIntStrict(args[3], "excludeRadius");
+        int threads = parseIntStrict(args[4], "threads");
 
         if (rangeBlocks <= 0) {
             throw new IllegalArgumentException("rangeBlocks must be > 0");
@@ -107,7 +105,8 @@ public class Main {
 
         // NOTE: This returns monument *centers* in block coords (x,z).
         // The internal algorithm is intentionally pluggable.
-        List<OceanMonumentCoords.MonumentPos> monuments = locator.findMonumentsInRange(rangeBlocks, excludeRadius);
+        List<OceanMonumentCoords.MonumentPos> monuments = locator.findMonumentsInRange(rangeBlocks, excludeRadius,
+                type.k);
 
         // 2) Find AFK spots for requested type
         AFKSpotFinder finder = new AFKSpotFinder(threads);

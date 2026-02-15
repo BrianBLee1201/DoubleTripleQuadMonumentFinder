@@ -31,7 +31,8 @@ public class OceanMonumentCoords {
     /**
      * Finds all ocean monument centers within [-rangeBlocks, +rangeBlocks] in X/Z.
      */
-    public List<MonumentPos> findMonumentsInRange(int rangeBlocks, int excludeBlocks) throws InterruptedException {
+    public List<MonumentPos> findMonumentsInRange(int rangeBlocks, int excludeBlocks, int k)
+            throws InterruptedException {
         if (rangeBlocks < 0) {
             throw new IllegalArgumentException("rangeBlocks must be >= 0");
         }
@@ -39,7 +40,8 @@ public class OceanMonumentCoords {
             throw new IllegalArgumentException("excludeBlocks must be >= 0");
         }
         if (excludeBlocks > rangeBlocks) {
-            throw new IllegalArgumentException("excludeBlocks (" + excludeBlocks + ") must be <= rangeBlocks (" + rangeBlocks + ")");
+            throw new IllegalArgumentException(
+                    "excludeBlocks (" + excludeBlocks + ") must be <= rangeBlocks (" + rangeBlocks + ")");
         }
 
         int minChunk = floorDiv(-rangeBlocks, 16);
@@ -50,7 +52,7 @@ public class OceanMonumentCoords {
 
         // The algorithm usually works in "structure regions" (spacing grid).
         // We expose the chunk range and let the strategy decide how to scan.
-        return algorithm.find(seed, minChunk, maxChunk, excludeChunks, threads);
+        return algorithm.find(seed, minChunk, maxChunk, excludeChunks, k, threads);
     }
 
     /**
@@ -58,9 +60,10 @@ public class OceanMonumentCoords {
      */
     public interface MonumentAlgorithm {
         /**
-         * @param excludeChunks Inner square radius (Chebyshev in chunk coords) to skip; 0 disables.
+         * @param excludeChunks Inner square radius (Chebyshev in chunk coords) to skip;
+         *                      0 disables.
          */
-        List<MonumentPos> find(long seed, int minChunk, int maxChunk, int excludeChunks, int threads)
+        List<MonumentPos> find(long seed, int minChunk, int maxChunk, int excludeChunks, int k, int threads)
                 throws InterruptedException;
     }
 
@@ -321,8 +324,8 @@ public class OceanMonumentCoords {
         // an AFK spot must be within 256 blocks of each other.
         // Region size is 32 chunks = 512 blocks, so any such pair must lie in the same
         // region or an adjacent region.
-        private static final int MAX_PAIRWISE_BLOCKS = 256;
-        private static final int MAX_PAIRWISE2 = MAX_PAIRWISE_BLOCKS * MAX_PAIRWISE_BLOCKS;
+        private static final int MAX_PAIRWISE_BLOCKS = Integer.getInteger("monuments.pairwiseBlocks", 320);
+        private static final long MAX_PAIRWISE2 = (long) MAX_PAIRWISE_BLOCKS * (long) MAX_PAIRWISE_BLOCKS;
 
         // Debug: print at most N isolated monuments that were pruned.
         // Override with: -Dmonuments.debugExcludedLimit=0 (disable) or a larger number.
@@ -392,38 +395,12 @@ public class OceanMonumentCoords {
             }
         }
 
-        private static final class IntBuilder {
-            private int[] a;
-            private int size;
-
-            IntBuilder(int initialCapacity) {
-                this.a = new int[Math.max(8, initialCapacity)];
-            }
-
-            void add(int v) {
-                int s = size;
-                if (s == a.length) {
-                    a = Arrays.copyOf(a, a.length + (a.length >> 1) + 16);
-                }
-                a[s] = v;
-                size = s + 1;
-            }
-
-            int size() {
-                return size;
-            }
-
-            int[] toArrayTrimmed() {
-                return Arrays.copyOf(a, size);
-            }
-        }
-
         public MonumentAlgorithm118Plus(MonumentValidator validator) {
             this.validator = validator;
         }
 
         @Override
-        public List<MonumentPos> find(long seed, int minChunk, int maxChunk, int excludeChunks, int threads)
+        public List<MonumentPos> find(long seed, int minChunk, int maxChunk, int excludeChunks, int k, int threads)
                 throws InterruptedException {
             // Convert chunk-range to region-range.
             final int minRegionX = floorDiv(getModifiedCoord(minChunk), SPACING);
@@ -437,6 +414,18 @@ public class OceanMonumentCoords {
                 System.out.println(
                         "[WARN] monuments.keepAll=true: disables pruning and can be very slow / memory-heavy.");
             }
+
+            // Including filtering logic here for simplicity since it's easier to prune
+            // early.
+
+            if (k < 1 || k > 4) {
+                throw new IllegalArgumentException("k must be 1..4 (got " + k + ")");
+            }
+
+            // For double/triple/quad, each monument must have at least (k-1) neighbors
+            // nearby.
+            // (This is a necessary condition; not sufficient, but great for pruning.)
+            final int requiredNeighbors = (k <= 1) ? 0 : (k - 1);
 
             // === STEP A: placement-only columns + pairability prefilter (NO cubiomes here)
             // ===
@@ -510,90 +499,98 @@ public class OceanMonumentCoords {
                 int processed = 0;
                 int totalColumns = (maxRegionX - minRegionX + 1);
 
-            for (int rx = minRegionX; rx <= maxRegionX; rx++) {
-                if (rx + 1 <= maxRegionX) {
-                    if (next == null || next.regionX != rx + 1) {
-                        next = awaitColumn.apply(rx + 1);
-                        totalCandidates += countPresent(next);
-                    }
-                } else {
-                    next = null;
-                }
-
-                for (int rz = minRegionZ; rz <= maxRegionZ; rz++) {
-                    if (!curr.hasAt(rz))
-                        continue;
-
-                    int axChunk = curr.getChunkXAt(rz);
-                    int azChunk = curr.getChunkZAt(rz);
-
-                    // Ring search: exclude inner square around origin (Chebyshev distance in chunk coords).
-                    if (excludeChunks > 0) {
-                        int cheb = Math.max(Math.abs(axChunk), Math.abs(azChunk));
-                        if (cheb <= excludeChunks) {
-                            // Skip anything fully inside the excluded inner area.
-                            continue;
+                for (int rx = minRegionX; rx <= maxRegionX; rx++) {
+                    if (rx + 1 <= maxRegionX) {
+                        if (next == null || next.regionX != rx + 1) {
+                            next = awaitColumn.apply(rx + 1);
+                            totalCandidates += countPresent(next);
                         }
+                    } else {
+                        next = null;
                     }
 
-                    boolean hasNeighbor = false;
-
-                    for (int dx = -1; dx <= 1 && !hasNeighbor; dx++) {
-                        Column col = (dx == -1) ? prev : (dx == 0 ? curr : next);
-                        if (col == null)
+                    for (int rz = minRegionZ; rz <= maxRegionZ; rz++) {
+                        if (!curr.hasAt(rz))
                             continue;
 
-                        for (int dz = -1; dz <= 1 && !hasNeighbor; dz++) {
-                            if (dx == 0 && dz == 0)
+                        int axChunk = curr.getChunkXAt(rz);
+                        int azChunk = curr.getChunkZAt(rz);
+
+                        // Ring search: exclude inner square around origin (Chebyshev distance in chunk
+                        // coords).
+                        if (excludeChunks > 0) {
+                            int cheb = Math.max(Math.abs(axChunk), Math.abs(azChunk));
+                            if (cheb <= excludeChunks) {
+                                // Skip anything fully inside the excluded inner area.
                                 continue;
-                            int nz = rz + dz;
-                            if (nz < minRegionZ || nz > maxRegionZ)
-                                continue;
-                            if (!col.hasAt(nz))
+                            }
+                        }
+
+                        int neighborCount = 0;
+
+                        for (int dx = -1; dx <= 1 && neighborCount < requiredNeighbors; dx++) {
+                            Column col = (dx == -1) ? prev : (dx == 0 ? curr : next);
+                            if (col == null)
                                 continue;
 
-                            int bxChunk = col.getChunkXAt(nz);
-                            int bzChunk = col.getChunkZAt(nz);
+                            for (int dz = -1; dz <= 1 && neighborCount < requiredNeighbors; dz++) {
+                                if (dx == 0 && dz == 0)
+                                    continue;
+                                int nz = rz + dz;
+                                if (nz < minRegionZ || nz > maxRegionZ)
+                                    continue;
+                                if (!col.hasAt(nz))
+                                    continue;
 
-                            int dxBlocks = (bxChunk - axChunk) << 4;
-                            int dzBlocks = (bzChunk - azChunk) << 4;
-                            long d2 = (long) dxBlocks * dxBlocks + (long) dzBlocks * dzBlocks;
+                                int bxChunk = col.getChunkXAt(nz);
+                                int bzChunk = col.getChunkZAt(nz);
 
-                            if (d2 <= (long) MAX_PAIRWISE2) {
-                                hasNeighbor = true;
+                                int dxBlocks = (bxChunk - axChunk) << 4;
+                                int dzBlocks = (bzChunk - azChunk) << 4;
+                                long d2 = (long) dxBlocks * (long) dxBlocks + (long) dzBlocks * (long) dzBlocks;
+
+                                if (d2 <= MAX_PAIRWISE2) {
+                                    neighborCount++;
+                                }
+                            }
+                        }
+
+                        if (keepAll || requiredNeighbors == 0 || neighborCount >= requiredNeighbors) {
+                            pairable.add(packChunk(axChunk, azChunk));
+                        } else {
+                            totalExcludedA++;
+                            if (DEBUG_EXCLUDED_LIMIT > 0 && printedExcludedA < DEBUG_EXCLUDED_LIMIT) {
+                                int bx = chunkCenterToBlock(axChunk);
+                                int bz = chunkCenterToBlock(azChunk);
+                                System.out.println("[DEBUG] Step A exclude (placement-only isolated) monument (" + bx
+                                        + "," + bz + ") - no neighbor within " + MAX_PAIRWISE_BLOCKS + " blocks");
+                                printedExcludedA++;
                             }
                         }
                     }
 
-                    if (keepAll || hasNeighbor) {
-                        pairable.add(packChunk(axChunk, azChunk));
-                    } else {
-                        totalExcludedA++;
-                        if (DEBUG_EXCLUDED_LIMIT > 0 && printedExcludedA < DEBUG_EXCLUDED_LIMIT) {
-                            int bx = chunkCenterToBlock(axChunk);
-                            int bz = chunkCenterToBlock(azChunk);
-                            System.out.println("[DEBUG] Step A exclude (placement-only isolated) monument (" + bx
-                                    + "," + bz + ") - no neighbor within " + MAX_PAIRWISE_BLOCKS + " blocks");
-                            printedExcludedA++;
-                        }
+                    processed++;
+                    if (logEvery > 0 && processed % logEvery == 0) {
+                        System.out.println("[" + LocalTime.now() + "] [INFO] Step A: columns done " + processed + "/"
+                                + totalColumns
+                                + ", candidatesSoFar=" + totalCandidates + ", pairableSoFar=" + pairable.size()
+                                + ", excludedSoFar=" + totalExcludedA);
                     }
-                }
 
-                processed++;
-                if (logEvery > 0 && processed % logEvery == 0) {
-                    System.out.println("[" + LocalTime.now() + "] [INFO] Step A: columns done " + processed + "/"
-                            + totalColumns
-                            + ", candidatesSoFar=" + totalCandidates + ", pairableSoFar=" + pairable.size()
-                            + ", excludedSoFar=" + totalExcludedA);
+                    prev = curr;
+                    curr = next;
                 }
-
-                prev = curr;
-                curr = next;
-            }
 
                 long[] pairablePacked = pairable.toArrayTrimmed();
                 System.out.println("[" + LocalTime.now() + "] [INFO] Step A complete: candidates=" + totalCandidates
                         + ", pairable=" + pairablePacked.length + ", excluded=" + totalExcludedA + ".");
+
+                // Step B header/progress
+                if (validator != null) {
+                    final int batchSizeForLog = Integer.getInteger("monuments.validateBatchSize", 10000);
+                    System.out.println("[" + LocalTime.now() + "] [INFO] Step B: validating " + pairablePacked.length
+                            + " candidate(s) in batches of " + batchSizeForLog + " (this can take a while)...");
+                }
 
                 // === STEP B: viability only on pairable survivors ===
                 long[] viablePacked = (validator == null) ? pairablePacked
@@ -602,7 +599,8 @@ public class OceanMonumentCoords {
                         "[" + LocalTime.now() + "] [INFO] Step B complete: viable=" + viablePacked.length + ".");
 
                 // === STEP C: re-prune after viability ===
-                long[] finalPacked = keepAll ? viablePacked : pruneIsolatedAfterViability(viablePacked);
+                long[] finalPacked = keepAll ? viablePacked
+                        : pruneIsolatedAfterViability(viablePacked, requiredNeighbors);
                 System.out.println(
                         "[" + LocalTime.now() + "] [INFO] Step C complete: after re-prune=" + finalPacked.length + ".");
 
@@ -631,8 +629,7 @@ public class OceanMonumentCoords {
                 int maxRegionZ,
                 int regionZLen,
                 int minChunk,
-                int maxChunk
-        ) {
+                int maxChunk) {
             Column col = new Column(regionX, minRegionZ, regionZLen);
 
             for (int rz = minRegionZ; rz <= maxRegionZ; rz++) {
@@ -663,7 +660,14 @@ public class OceanMonumentCoords {
             if (packed.length == 0)
                 return packed;
 
-            final int batchSize = Integer.getInteger("monuments.validateBatchSize", 1_000_000);
+            final int batchSize = Integer.getInteger("monuments.validateBatchSize", 10000);
+            // Progress logging controls (set to 0 to disable)
+            // Preferred: log every N items processed (independent of batch size)
+            final int progressEveryItems = Integer.getInteger("monuments.validateProgressEveryItems", 100_000);
+            // Back-compat: log every N batches (used only if progressEveryItems == 0)
+            final int progressEveryBatches = Integer.getInteger("monuments.validateProgressEveryBatches", 1000);
+            final long t0 = System.nanoTime();
+
             LongBuilder out = new LongBuilder(Math.min(packed.length, 1 << 16));
 
             int[] xs = new int[Math.min(batchSize, packed.length)];
@@ -671,6 +675,10 @@ public class OceanMonumentCoords {
             byte[] flags = new byte[Math.min(batchSize, packed.length)];
 
             int pos = 0;
+            int batchesDone = 0;
+            final int totalBatches = (packed.length + batchSize - 1) / batchSize;
+            int nextLogAt = (progressEveryItems > 0) ? Math.min(progressEveryItems, packed.length) : Integer.MAX_VALUE;
+
             while (pos < packed.length) {
                 int n = Math.min(batchSize, packed.length - pos);
 
@@ -702,11 +710,59 @@ public class OceanMonumentCoords {
                     }
                 }
                 pos += n;
+                batchesDone++;
+
+                final boolean shouldLog;
+                if (progressEveryItems > 0) {
+                    // Item-based logging: independent of batch size.
+                    shouldLog = (pos >= nextLogAt) || (batchesDone == totalBatches);
+                } else {
+                    // Fallback to batch-based logging.
+                    shouldLog = (progressEveryBatches > 0) && ((batchesDone % progressEveryBatches == 0) || (batchesDone == totalBatches));
+                }
+
+                if (shouldLog) {
+                    long now = System.nanoTime();
+                    double elapsedSec = (now - t0) / 1e9;
+                    double done = Math.min(1.0, (double) pos / (double) packed.length);
+
+                    // Rate in items/sec (avoid div-by-zero)
+                    double rate = (elapsedSec <= 1e-9) ? 0.0 : (pos / elapsedSec);
+                    double remaining = packed.length - pos;
+                    double etaSec = (rate <= 1e-9) ? Double.POSITIVE_INFINITY : (remaining / rate);
+
+                    String eta;
+                    if (Double.isInfinite(etaSec) || etaSec > 365 * 24 * 3600) {
+                        eta = "?";
+                    } else {
+                        long s = Math.max(0L, (long) Math.round(etaSec));
+                        long h = s / 3600;
+                        long m = (s % 3600) / 60;
+                        long sec = s % 60;
+                        if (h > 0) eta = h + "h " + m + "m " + sec + "s";
+                        else if (m > 0) eta = m + "m " + sec + "s";
+                        else eta = sec + "s";
+                    }
+
+                    // Print compact progress line
+                    System.out.println("[" + LocalTime.now() + "] [INFO] Step B: batches " + batchesDone + "/" + totalBatches
+                            + ", processed=" + pos + "/" + packed.length
+                            + String.format(", %.1f%%", done * 100.0)
+                            + (rate <= 0.0 ? "" : String.format(", rate=%.0f/s", rate))
+                            + ", ETA=" + eta);
+
+                    // Advance item-based log threshold (skip ahead in case we jumped by >1 interval)
+                    if (progressEveryItems > 0) {
+                        while (nextLogAt <= pos && nextLogAt < packed.length) {
+                            nextLogAt = Math.min(packed.length, nextLogAt + progressEveryItems);
+                        }
+                    }
+                }
             }
             return out.toArrayTrimmed();
         }
 
-        private static long[] pruneIsolatedAfterViability(long[] packed) {
+        private static long[] pruneIsolatedAfterViability(long[] packed, int requiredNeighbors) {
             if (packed.length == 0)
                 return packed;
 
@@ -737,10 +793,10 @@ public class OceanMonumentCoords {
                 int rx = (int) (key >> 32);
                 int rz = (int) key;
 
-                boolean hasNeighbor = false;
+                int neighborCount = 0;
 
-                for (int dx = -1; dx <= 1 && !hasNeighbor; dx++) {
-                    for (int dz = -1; dz <= 1 && !hasNeighbor; dz++) {
+                for (int dx = -1; dx <= 1 && neighborCount < requiredNeighbors; dx++) {
+                    for (int dz = -1; dz <= 1 && neighborCount < requiredNeighbors; dz++) {
                         if (dx == 0 && dz == 0)
                             continue;
 
@@ -754,15 +810,15 @@ public class OceanMonumentCoords {
 
                         int dxBlocks = (bx - ax) << 4;
                         int dzBlocks = (bz - az) << 4;
-                        long d2 = (long) dxBlocks * dxBlocks + (long) dzBlocks * dzBlocks;
+                        long d2 = (long) dxBlocks * (long) dxBlocks + (long) dzBlocks * (long) dzBlocks;
 
-                        if (d2 <= (long) MAX_PAIRWISE2) {
-                            hasNeighbor = true;
+                        if (d2 <= MAX_PAIRWISE2) {
+                            neighborCount++;
                         }
                     }
                 }
 
-                if (hasNeighbor) {
+                if (requiredNeighbors == 0 || neighborCount >= requiredNeighbors) {
                     kept.add(aPacked);
                 } else {
                     excluded++;
@@ -840,7 +896,6 @@ public class OceanMonumentCoords {
                 return (int) z;
             }
         }
-
 
         /**
          * Returns the possible structure start chunk for a region.
