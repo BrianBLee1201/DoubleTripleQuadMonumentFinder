@@ -345,10 +345,17 @@ From seed 4803524437 with AFK spot at x = -31,815, y = 50, and z = -19,009 and 2
 1. **Does this work on Bedrock Edition:** Unfortunately, no. The code that identifies ocean monuments is completely different from Java.
 2. **Can this locate sponge rooms:** No. However, you can look at [here](https://github.com/BrianBLee1201/SpongeAnalyzer), which I created a tool for you.
 3. **Why did you pick at y level 50 when calculating the AFK point:** because it yields the highest coverage. 
+
 I had been experimenting different y values, and the results show that y level 50 is the ideal layer. Since monuments range from y levels 39 to 61 inclusive and spheres are perfectly symmetrical, I simply took the average of two numbers, which is $\ (39+61)/2=50$. 
-4. **Why did you write y level 50 in the Nether:** it depends on context. It is optional if you intend to collect the items in the Nether. I noticed that it is easier to travel in the Nether above the Nether roof than below it, and in the former case, players find it easier building to avoid hostile Nether mobs attacking them. 
+
+4. **Why did you write y level 50 in the Nether:** it depends on context. 
+
+It is optional if you intend to collect the items in the Nether. I noticed that it is easier to travel in the Nether above the Nether roof than below it, and in the former case, players find it easier building to avoid hostile Nether mobs attacking them. 
+
 However, if you intend to collect items in the overworld side (Guardians teleporting from Overworld to Nether ➡️ Guardian dies in the Nether via fall damage/player killing ➡️ drops get sent back to the Overworld), then the y level does matter. You do not want Guardians to accidentally teleport to the wrong spot in the Nether, and you do not want to teleport the drops to the wrong side in the Overworld, where it will lag the game if you do not collect it.
+
 As always, **test this in creative.**
+
 5. **You mentioned portal-based guardian farms. Which one do you recommend:** check this one: https://discord.com/channels/1161803566265143306/1444281607254183988/1444281607254183988. You might want to create a Discord account and join the TMC Catalogue server to get the schematics and world download. 
 6. **I noticed I am getting a heap error:** there are two cases:
 	- If you are searching for double monuments, **only search at a range of 50,000 blocks radius,** as you are guaranteed to have one AFK point that has a maximum coverage.
