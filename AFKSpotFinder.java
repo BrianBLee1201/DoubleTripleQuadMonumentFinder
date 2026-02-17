@@ -2,7 +2,8 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Finds AFK points (in block coordinates) that are within 128 blocks of k ocean monument centers.
+ * Finds AFK points (in block coordinates) that are within 128 blocks of k ocean monument centers,
+ * then refines each unique monument-set to the best AFK (x,y,z) that maximizes guardian spawn coverage.
  *
  * Notes:
  * - Monument centers are expected to be in OVERWORLD block coords (center-of-chunk: chunk*16+8).
@@ -13,15 +14,49 @@ public class AFKSpotFinder {
 
     public static final class AFKSpot {
         public final int afkX; // blocks
+        public final int afkY; // blocks (best AFK Y after coverage optimization; -1 if not computed)
         public final int afkZ; // blocks
+
+        // Convenience: tell the player where to place the AFK block (x, y-1, z).
+        public final int placeBlockX;
+        public final int placeBlockY;
+        public final int placeBlockZ;
+
+        // Coverage score (spawnable blocks counted by MaximumCoverageAFK); -1 if not computed.
+        public final long totalCovered;
+
         public final int count; // 2/3/4
         public final List<OceanMonumentCoords.MonumentPos> monuments;
 
+        /**
+         * Provisional AFK spot (x,z only). Y/coverage will be filled by a later optimization step.
+         */
         public AFKSpot(int afkX, int afkZ, List<OceanMonumentCoords.MonumentPos> monuments) {
+            this(afkX, -1, afkZ, afkX, -1, afkZ, -1L, monuments);
+        }
+
+        /**
+         * Final AFK spot (x,y,z) with coverage information.
+         */
+        public AFKSpot(int afkX, int afkY, int afkZ, int placeBlockX, int placeBlockY, int placeBlockZ,
+                       long totalCovered, List<OceanMonumentCoords.MonumentPos> monuments) {
             this.afkX = afkX;
+            this.afkY = afkY;
             this.afkZ = afkZ;
+            this.placeBlockX = placeBlockX;
+            this.placeBlockY = placeBlockY;
+            this.placeBlockZ = placeBlockZ;
+            this.totalCovered = totalCovered;
             this.monuments = Collections.unmodifiableList(new ArrayList<>(monuments));
             this.count = monuments.size();
+        }
+
+        /** Build a finalized AFKSpot from MaximumCoverageAFK's result. */
+        static AFKSpot fromCoverage(MaximumCoverageAFK.BestAFK best, List<OceanMonumentCoords.MonumentPos> monuments) {
+            return new AFKSpot(best.x, best.y, best.z,
+                    best.placeBlockX, best.placeBlockY, best.placeBlockZ,
+                    best.totalCovered,
+                    monuments);
         }
 
         public double distanceToOrigin() {
@@ -35,8 +70,8 @@ public class AFKSpotFinder {
     private static final int AFK_RADIUS_BLOCKS = 128;
     private static final int AFK_RADIUS2 = AFK_RADIUS_BLOCKS * AFK_RADIUS_BLOCKS;
 
-    // If a point is within 128 of both monuments, their pairwise distance <= 256.
-    private static final int MAX_PAIRWISE_BLOCKS = 256;
+    // If a point is within 128 of both monuments, their pairwise distance <= 256. (change it to 224)
+    private static final int MAX_PAIRWISE_BLOCKS = 224;
     private static final int MAX_PAIRWISE2 = MAX_PAIRWISE_BLOCKS * MAX_PAIRWISE_BLOCKS;
 
     // Spatial hash cell size in blocks.
@@ -108,7 +143,23 @@ public class AFKSpotFinder {
                 }
             }
 
-            return dedup.values();
+            // Convert unique monument-sets into finalized AFK spots by maximizing coverage (x,y,z).
+            ArrayList<AFKSpot> provisional = dedup.values();
+            ArrayList<AFKSpot> finalized = new ArrayList<>(provisional.size());
+
+            // Note: This step is typically cheap because the number of unique monument-groups is small
+            // compared to the raw candidate count.
+            for (AFKSpot s : provisional) {
+                MaximumCoverageAFK.BestAFK best = MaximumCoverageAFK.findBest(s.monuments);
+                finalized.add(AFKSpot.fromCoverage(best, s.monuments));
+            }
+
+            // Optional: sort by best coverage descending, then distance to origin.
+            finalized.sort(Comparator
+                    .comparingLong((AFKSpot s) -> s.totalCovered).reversed()
+                    .thenComparingDouble(AFKSpot::distanceToOrigin));
+
+            return finalized;
         } finally {
             pool.shutdownNow();
         }
@@ -253,11 +304,13 @@ public class AFKSpotFinder {
     }
 
     /**
-     * Hash-based dedup key: AFK coords + sorted monument coords.
-     * Uses a 64-bit mix to avoid building huge Strings.
+     * Hash-based dedup key: sorted monument coords only.
+     *
+     * We intentionally do NOT include AFK coords here, because we later compute the best (x,y,z)
+     * via MaximumCoverageAFK and we want exactly one result per unique monument-set.
      */
     private long keyOf(AFKSpot s) {
-        long h = mix64((((long) s.afkX) << 32) ^ (s.afkZ & 0xffffffffL));
+        long h = 0x9e3779b97f4a7c15L;
 
         // Sort monument coords deterministically for stable key.
         // We avoid allocating a new list: copy to array.

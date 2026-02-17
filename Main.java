@@ -30,21 +30,27 @@ public class Main {
 
     private static void writeCsv(String path, Type type, List<AFKSpotFinder.AFKSpot> spots) throws IOException {
         try (BufferedWriter w = new BufferedWriter(new FileWriter(path))) {
-            w.write("type,afkX,afkZ,netherX,netherZ,count,monuments\n");
+            w.write("type,afkX,afkY,afkZ,netherX,netherY,netherZ,placeBlockX,placeBlockY,placeBlockZ,totalCovered,count,monuments\n");
             for (AFKSpotFinder.AFKSpot s : spots) {
                 // Nether conversion: divide by 8, round to nearest int (you can change policy)
                 int netherX = (int) Math.round(s.afkX / 8.0);
                 int netherZ = (int) Math.round(s.afkZ / 8.0);
+
+                // Y is typically kept the same when building portals. We still output a "netherY" column
+                // so users can keep their AFK platform height consistent.
+                int netherY = s.afkY;
 
                 String monumentsStr = s.monuments.stream()
                         .map(m -> "(" + m.centerX + "," + m.centerZ + ")")
                         .collect(Collectors.joining(";"));
 
                 w.write(String.format(Locale.ROOT,
-                        "%s,%d,%d,%d,%d,%d,%s\n",
+                        "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%s\n",
                         type.name().toLowerCase(Locale.ROOT),
-                        s.afkX, s.afkZ,
-                        netherX, netherZ,
+                        s.afkX, s.afkY, s.afkZ,
+                        netherX, netherY, netherZ,
+                        s.placeBlockX, s.placeBlockY, s.placeBlockZ,
+                        s.totalCovered,
                         s.count,
                         csvEscape(monumentsStr)));
             }
@@ -93,6 +99,9 @@ public class Main {
         if (rangeBlocks <= 0) {
             throw new IllegalArgumentException("rangeBlocks must be > 0");
         }
+        if (rangeBlocks > 29999984) {
+            throw new IllegalArgumentException("rangeBlocks must be <= 29999984 (world border limit)");
+        }
         if (excludeRadius < 0) {
             throw new IllegalArgumentException("excludeRadius must be >= 0");
         }
@@ -113,12 +122,12 @@ public class Main {
 
         List<AFKSpotFinder.AFKSpot> spots = finder.findAFKSpots(monuments, type.k);
 
-        // Sort: highest count first (all same here), then closest to origin, then
-        // coordinates
+        // Sort: best coverage first, then closest to origin, then coordinates.
         spots.sort(Comparator
-                .comparingInt((AFKSpotFinder.AFKSpot s) -> -s.count)
-                .thenComparingDouble(s -> s.distanceToOrigin())
+                .comparingLong((AFKSpotFinder.AFKSpot s) -> s.totalCovered).reversed()
+                .thenComparingDouble(AFKSpotFinder.AFKSpot::distanceToOrigin)
                 .thenComparingInt(s -> s.afkX)
+                .thenComparingInt(s -> s.afkY)
                 .thenComparingInt(s -> s.afkZ));
 
         // 3) Write CSV

@@ -5,8 +5,10 @@ import java.time.LocalTime;
 public class OceanMonumentCoords {
 
     public static final class MonumentPos {
-        public final int centerX; // in blocks
-        public final int centerZ; // in blocks
+        // Monument center in blocks (X/Z). The offset convention is controlled by the
+        // system property: -Dmonuments.centerOffset (default 0; set to 8 for old behavior).
+        public final int centerX;
+        public final int centerZ;
 
         public MonumentPos(int centerX, int centerZ) {
             this.centerX = centerX;
@@ -324,7 +326,7 @@ public class OceanMonumentCoords {
         // an AFK spot must be within 256 blocks of each other.
         // Region size is 32 chunks = 512 blocks, so any such pair must lie in the same
         // region or an adjacent region.
-        private static final int MAX_PAIRWISE_BLOCKS = Integer.getInteger("monuments.pairwiseBlocks", 320);
+        private static final int MAX_PAIRWISE_BLOCKS = Integer.getInteger("monuments.pairwiseBlocks", 256);
         private static final long MAX_PAIRWISE2 = (long) MAX_PAIRWISE_BLOCKS * (long) MAX_PAIRWISE_BLOCKS;
 
         // Debug: print at most N isolated monuments that were pruned.
@@ -995,9 +997,16 @@ public class OceanMonumentCoords {
         return Math.floorDiv(a, b);
     }
 
-    // Optional helper: convert a chunk coordinate to a "center of chunk" block
-    // coordinate
+    // Ocean monument “center” block coordinate convention.
+    //
+    // Empirically (and in many external tools), the structure start chunk maps to a block coordinate
+    // that is aligned on 16 (i.e., chunk*16). Older code used chunk*16+8 (center-of-chunk).
+    //
+    // To keep the tool robust and allow either convention, we default to 0 and allow override:
+    //   -Dmonuments.centerOffset=8
+    private static final int MONUMENT_CENTER_OFFSET = Integer.getInteger("monuments.centerOffset", 0);
+
     public static int chunkCenterToBlock(int chunk) {
-        return chunk * 16 + 8;
+        return chunk * 16 + MONUMENT_CENTER_OFFSET;
     }
 }
