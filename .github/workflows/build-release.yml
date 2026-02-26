@@ -20,8 +20,6 @@ jobs:
             platform: windows
           - os: macos-14
             platform: macos-arm64
-          - os: macos-14-large
-            platform: macos-intel
 
     runs-on: ${{ matrix.os }}
 
