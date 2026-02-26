@@ -1,0 +1,206 @@
+name: build-release
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-14
+            platform: macos-arm64
+          - os: macos-13
+            platform: macos-intel
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Clone cubiomes into external/
+        shell: bash
+        run: |
+          mkdir -p external
+          if [ ! -d "external/cubiomes" ]; then
+            git clone --depth 1 https://github.com/Cubitect/cubiomes.git external/cubiomes
+          fi
+
+      # ----------------------------
+      # Build native library (Linux/macOS)
+      # ----------------------------
+      - name: Build native (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CUBIOMES_DIR="$PWD/external/cubiomes"
+
+          if [ ! -f "$CUBIOMES_DIR/generator.c" ]; then
+            echo "CUBIOMES_DIR invalid: $CUBIOMES_DIR"
+            exit 1
+          fi
+
+          EXT="so"
+          if [ "$(uname)" = "Darwin" ]; then EXT="dylib"; fi
+
+          clang -shared -O2 -fPIC \
+            -I"${JAVA_HOME}/include" \
+            -I"${JAVA_HOME}/include/$(uname | tr '[:upper:]' '[:lower:]')" \
+            -I"$CUBIOMES_DIR" \
+            -o "libcubiomeswrap.${EXT}" \
+            native/cubiomeswrap_jni.c \
+            "$CUBIOMES_DIR"/biomenoise.c \
+            "$CUBIOMES_DIR"/biomes.c \
+            "$CUBIOMES_DIR"/finders.c \
+            "$CUBIOMES_DIR"/generator.c \
+            "$CUBIOMES_DIR"/layers.c \
+            "$CUBIOMES_DIR"/noise.c \
+            "$CUBIOMES_DIR"/util.c \
+            -lm
+
+          echo "Built libcubiomeswrap.${EXT}"
+          ls -la "libcubiomeswrap.${EXT}"
+
+      # ----------------------------
+      # Build native library (Windows)
+      # ----------------------------
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        uses: llvm/actions/setup-llvm@v1
+        with:
+          version: "17.0.6"
+
+      - name: Build native (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $CUBIOMES_DIR = (Resolve-Path ".\external\cubiomes").Path
+          if (!(Test-Path "$CUBIOMES_DIR\generator.c")) { throw "cubiomes not found at $CUBIOMES_DIR" }
+
+          # Produce cubiomeswrap.dll (base name cubiomeswrap for System.loadLibrary)
+          clang -shared -O2 `
+            -I"$env:JAVA_HOME\include" `
+            -I"$env:JAVA_HOME\include\win32" `
+            -I"$CUBIOMES_DIR" `
+            -o "cubiomeswrap.dll" `
+            "native\cubiomeswrap_jni.c" `
+            "$CUBIOMES_DIR\biomenoise.c" `
+            "$CUBIOMES_DIR\biomes.c" `
+            "$CUBIOMES_DIR\finders.c" `
+            "$CUBIOMES_DIR\generator.c" `
+            "$CUBIOMES_DIR\layers.c" `
+            "$CUBIOMES_DIR\noise.c" `
+            "$CUBIOMES_DIR\util.c"
+
+          Write-Host "Built cubiomeswrap.dll"
+          dir cubiomeswrap.dll
+
+      # ----------------------------
+      # Build Java -> Jar
+      # ----------------------------
+      - name: Compile Java
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes
+          javac -encoding UTF-8 -source 17 -target 17 \
+            -d build/classes \
+            Main.java OceanMonumentCoords.java AFKSpotFinder.java MaximumCoverageAFK.java
+
+      - name: Create runnable jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/dist
+          cat > build/manifest.txt << 'EOF'
+          Manifest-Version: 1.0
+          Main-Class: Main
+          EOF
+
+          jar cfm build/dist/DoubleTripleQuadMonumentFinder.jar build/manifest.txt -C build/classes .
+
+          ls -la build/dist/DoubleTripleQuadMonumentFinder.jar
+
+      # ----------------------------
+      # Package ZIP (Jar + native + scripts + README + images)
+      # ----------------------------
+      - name: Package release zip (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/package/DoubleTripleQuadMonumentFinder
+
+          cp build/dist/DoubleTripleQuadMonumentFinder.jar build/package/DoubleTripleQuadMonumentFinder/
+          cp README.md LICENSE build/package/DoubleTripleQuadMonumentFinder/ || true
+          if [ -d images ]; then cp -R images build/package/DoubleTripleQuadMonumentFinder/; fi
+
+          # copy native
+          if [ "$(uname)" = "Darwin" ]; then
+            cp libcubiomeswrap.dylib build/package/DoubleTripleQuadMonumentFinder/
+          else
+            cp libcubiomeswrap.so build/package/DoubleTripleQuadMonumentFinder/
+          fi
+
+          # run script
+          cat > build/package/DoubleTripleQuadMonumentFinder/run.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec java -Djava.library.path="$DIR" -jar "$DIR/DoubleTripleQuadMonumentFinder.jar" "$@"
+          EOF
+          chmod +x build/package/DoubleTripleQuadMonumentFinder/run.sh
+
+          (cd build/package && zip -r "../DoubleTripleQuadMonumentFinder-${{ matrix.platform }}.zip" DoubleTripleQuadMonumentFinder)
+
+      - name: Package release zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\package\DoubleTripleQuadMonumentFinder | Out-Null
+
+          Copy-Item build\dist\DoubleTripleQuadMonumentFinder.jar build\package\DoubleTripleQuadMonumentFinder\
+          if (Test-Path README.md) { Copy-Item README.md build\package\DoubleTripleQuadMonumentFinder\ }
+          if (Test-Path LICENSE)   { Copy-Item LICENSE build\package\DoubleTripleQuadMonumentFinder\ }
+          if (Test-Path images)    { Copy-Item images build\package\DoubleTripleQuadMonumentFinder\ -Recurse }
+
+          Copy-Item cubiomeswrap.dll build\package\DoubleTripleQuadMonumentFinder\
+
+          @'
+          @echo off
+          set DIR=%~dp0
+          java -Djava.library.path="%DIR%" -jar "%DIR%DoubleTripleQuadMonumentFinder.jar" %*
+          '@ | Out-File -Encoding ASCII build\package\DoubleTripleQuadMonumentFinder\run.bat
+
+          Compress-Archive -Path build\package\DoubleTripleQuadMonumentFinder -DestinationPath build\DoubleTripleQuadMonumentFinder-${{ matrix.platform }}.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoubleTripleQuadMonumentFinder-${{ matrix.platform }}
+          path: build/DoubleTripleQuadMonumentFinder-${{ matrix.platform }}.zip
+
+      - name: Attach ZIPs to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/DoubleTripleQuadMonumentFinder-${{ matrix.platform }}.zip

@@ -3,6 +3,8 @@
 
 # Compiled Java classes
 *.class
+build/
+out/
 
 # Native build artifacts
 *.dylib
@@ -19,7 +21,7 @@
 results.csv
 
 # External dependencies (cloned repos, cubiomes source, etc.)
-external/
+external/cubiomes
 
 # Native build directory (if you compile inside native/)
 native/*.o
