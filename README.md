@@ -490,7 +490,7 @@ As always, **test this in creative.**
 
 5. **You mentioned portal-based guardian farms. Which one do you recommend:** check this one: https://discord.com/channels/1161803566265143306/1444281607254183988/1444281607254183988. You might want to create a Discord account and join the TMC Catalogue server to get the schematics and world download. 
 
-**Note**: I had not tried it. If you encounter problems or need help, you will have to ask within the server, not me.
+**Note**: I had not tried it. If you encounter problems or need help, you will have to post in the server. Do not send messages or post forums stating that the farm does not work, as I did not design it.
 
 6. **I noticed I am getting a heap error:** there are two cases:
 	- If you are searching for double monuments, **only search at a range of 50,000 blocks radius,** as you are guaranteed to have one AFK point that has a maximum coverage.
