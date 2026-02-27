@@ -83,9 +83,14 @@ public class Main {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 5) {
-            System.err.println("Usage:");
+            System.err.println("Usage (Release ZIP / jar):");
+            System.err.println("  java -jar DoubleTripleQuadMonumentFinder.jar <seed> <double|triple|quad> <rangeBlocks> <excludeRadius> <threads>");
+            System.err.println();
+            System.err.println("Usage (from source / dev):");
             System.err.println("  java Main <seed> <double|triple|quad> <rangeBlocks> <excludeRadius> <threads>");
+            System.err.println();
             System.err.println("Examples:");
+            System.err.println("  java -jar DoubleTripleQuadMonumentFinder.jar 123456789 double 20000 10000 4");
             System.err.println("  java Main 123456789 double 20000 10000 4");
             System.exit(1);
         }

@@ -137,26 +137,79 @@ To reduce any potential errors such as `command not found`, download the require
 
 - **[Git](https://git-scm.com/install/windows)** (required for cloning the repository and submodules)
 
-- **[Clang](https://winlibs.com)** (required to compile `libcubiomeswrap.dylib`)
-	- I recommend watching this [video](https://youtu.be/4Ob_w1yDd6M?si=6N6c6BzGkQ6dycOm) on installing Clang. You will need to configure the `PATH` variable to execute Clang.
+- **C/C++ toolchain** (required to compile the native cubiomes JNI wrapper)
+	- macOS: Xcode Command Line Tools (clang)
+	- Linux: clang or gcc
+	- Windows: MSYS2 MinGW64
 
 ---
 
-## Build (Development Version)
+## How to run
+
+There are two ways:
+
+- A) **Run from a Release ZIP (recommended)** — easiest for most players
+- B) **Run from source with Gradle** — for developers and contributors
+
+Both methods produce the same output:
+
+- `results.csv`
+
+---
+
+### A) Run from a Release ZIP (recommended)
+
+Make sure you choose the right version.
+
+#### A1) Running DoubleTripleQuadMonumentFinder.jar
+
+1. Download the ZIP for your platform from the GitHub Releases page and unzip it.
+2. Open a terminal in the unzipped folder (the folder that contains `DoubleTripleQuadMonumentFinder.jar`).
+The ZIP already includes the correct native library for your platform, so no manual compilation is needed.
+3. Run with this command:
+```bash
+java -jar DoubleTripleQuadMonumentFinder.jar <seed> <double|triple|quad> <rangeBlocks> <excludeRadius> <threads>
+```
+
+#### A2) Arguments
+
+All 5 arguments are required. 
+
+| Argument  | Description |
+| -- | -- |
+|`seed`|The Minecraft world seed to analyze (must be a number).|
+|`type`|The type of monuments you want to search (options: `double`, `triple`, `quad`, case-insensitive)|
+|`rangeBlocks`|Search radius in blocks (as a square) around the world origin (0,0).|
+| `excludeRadius` |Inner square radius (in blocks) to exclude from the search. Enables ring-based scans for large worlds. Setting it to 0 runs a full square|
+| `threads` | Number of threads in your search. _This depends on your CPU and the number of cores, so be mindful. Try 4 or 8 threads._ |
+
+Example:
+
+```bash
+java -jar DoubleTripleQuadMonumentFinder.jar -4993847 double 100000 40000 6
+```
+
+This command:
+- sets seed to -4993847.
+- searches for AFK points that have double monuments
+- searches through 100,000 blocks square radius
+- sets the `excludeRadius` to 40,000, meaning we run a ring scan and excludes AFK points within a 40,000 square radius range
+- uses 6 threads
+
+---
+
+### B) Run from source (developers)
+
 
 Currently, you must compile the native cubiomes wrapper manually. This step is highly recommended because without it, you will get results that do not have ocean monuments (very inaccurate).
 
-### Compile `libcubiomeswrap.dylib` (macOS)
+#### B1) Compile the native cubiomes wrapper (required for correct results)
 
 This project uses a small JNI shim (`native/cubiomeswrap_jni.c`) compiled together with the **cubiomes** source files.
 
-1) Ensure you have a Java 17+ JDK installed and set `JAVA_HOME`:
+If you skip this step, Java will fall back to “no biome validation” and results will be **very inaccurate**.
 
-```bash
-export JAVA_HOME=$(/usr/libexec/java_home)
-```  
-
-2) Clone cubiomes into `external/`:
+##### B1a) Clone cubiomes into `external/`
 
 ```bash
 mkdir -p external
@@ -165,65 +218,144 @@ git clone https://github.com/Cubitect/cubiomes.git
 cd ..
 ```
 
-3) Point `CUBIOMES_DIR` to the cubiomes source folder (the one containing `generator.c`, `biomes.c`, etc.):
+##### B1b) Set environment variables
 
+You need:
+- `JAVA_HOME` pointing to your JDK (Java 17+)
+- `CUBIOMES_DIR` pointing to the cloned cubiomes folder (the one containing `generator.c`, `biomes.c`, etc.)
+
+**macOS (bash/zsh):**
 ```bash
+export JAVA_HOME=$(/usr/libexec/java_home)
 export CUBIOMES_DIR="$PWD/external/cubiomes"
 ```
 
-4) Compile the JNI wrapper + cubiomes sources into a macOS dynamic library:
-
+**Linux (bash):**
 ```bash
-clang -dynamiclib -O2 -fPIC \
--I"$JAVA_HOME/include" \
--I"$JAVA_HOME/include/darwin" \
--I"$CUBIOMES_DIR" \
--o libcubiomeswrap.dylib \
-native/cubiomeswrap_jni.c \
-"$CUBIOMES_DIR"/biomenoise.c \
-"$CUBIOMES_DIR"/biomes.c \
-"$CUBIOMES_DIR"/finders.c \
-"$CUBIOMES_DIR"/generator.c \
-"$CUBIOMES_DIR"/layers.c \
-"$CUBIOMES_DIR"/noise.c \
-"$CUBIOMES_DIR"/util.c \
--lm
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64   # adjust if different
+export CUBIOMES_DIR="$PWD/external/cubiomes"
 ```
 
-5) Verify the JNI symbols are present (you should see `Java_OceanMonumentCoords_...`):
+**Windows (PowerShell):**
+```powershell
+$env:JAVA_HOME = "C:\\Program Files\\Java\\jdk-22"   # adjust if different
+$env:CUBIOMES_DIR = "$PWD\\external\\cubiomes"
+```
 
+**Windows (CMD):**
+```bat
+set JAVA_HOME=C:\Program Files\Java\jdk-22
+set CUBIOMES_DIR=%cd%\external\cubiomes
+```
+
+##### B1c) Build the native library
+
+Choose the command for your OS. The output file must be placed in the project root so Java can load it.
+
+**macOS → `libcubiomeswrap.dylib`**
+```bash
+clang -dynamiclib -O2 -fPIC \
+  -I"$JAVA_HOME/include" \
+  -I"$JAVA_HOME/include/darwin" \
+  -I"$CUBIOMES_DIR" \
+  -o libcubiomeswrap.dylib \
+  native/cubiomeswrap_jni.c \
+  "$CUBIOMES_DIR"/biomenoise.c \
+  "$CUBIOMES_DIR"/biomes.c \
+  "$CUBIOMES_DIR"/finders.c \
+  "$CUBIOMES_DIR"/generator.c \
+  "$CUBIOMES_DIR"/layers.c \
+  "$CUBIOMES_DIR"/noise.c \
+  "$CUBIOMES_DIR"/util.c \
+  -lm
+```
+
+**Linux → `libcubiomeswrap.so`**
+```bash
+clang -shared -O2 -fPIC \
+  -I"$JAVA_HOME/include" \
+  -I"$JAVA_HOME/include/linux" \
+  -I"$CUBIOMES_DIR" \
+  -o libcubiomeswrap.so \
+  native/cubiomeswrap_jni.c \
+  "$CUBIOMES_DIR"/biomenoise.c \
+  "$CUBIOMES_DIR"/biomes.c \
+  "$CUBIOMES_DIR"/finders.c \
+  "$CUBIOMES_DIR"/generator.c \
+  "$CUBIOMES_DIR"/layers.c \
+  "$CUBIOMES_DIR"/noise.c \
+  "$CUBIOMES_DIR"/util.c \
+  -lm
+```
+
+**Windows (recommended: MSYS2 MinGW64) → `libcubiomeswrap.dll`**
+
+1) Install MSYS2, then open **“MSYS2 MinGW64”** terminal.
+2) Install tools:
+```bash
+pacman -Syu
+pacman -S --needed mingw-w64-x86_64-clang mingw-w64-x86_64-binutils make git
+```
+3) Set env vars (MSYS2 bash):
+```bash
+export JAVA_HOME="C:/Program Files/Java/jdk-22"   # adjust if different
+export CUBIOMES_DIR="$PWD/external/cubiomes"
+```
+4) Build:
+```bash
+clang -shared -O2 -fPIC \
+  -I"$JAVA_HOME/include" \
+  -I"$JAVA_HOME/include/win32" \
+  -I"$CUBIOMES_DIR" \
+  -o libcubiomeswrap.dll \
+  native/cubiomeswrap_jni.c \
+  "$CUBIOMES_DIR"/biomenoise.c \
+  "$CUBIOMES_DIR"/biomes.c \
+  "$CUBIOMES_DIR"/finders.c \
+  "$CUBIOMES_DIR"/generator.c \
+  "$CUBIOMES_DIR"/layers.c \
+  "$CUBIOMES_DIR"/noise.c \
+  "$CUBIOMES_DIR"/util.c
+```
+
+##### B1d) Verify JNI symbols exported
+
+**macOS:**
 ```bash
 nm -gU libcubiomeswrap.dylib | grep -i Java_
 ```
 
-If you see something like this:
-
+**Linux:**
 ```bash
-0000000000000500 T _Java_OceanMonumentCoords_00024CubiomesSupport_00024CubiomesHandle_c_1create
-00000000000007c0 T _Java_OceanMonumentCoords_00024CubiomesSupport_00024CubiomesHandle_c_1free
-0000000000000584 T _Java_OceanMonumentCoords_00024CubiomesSupport_00024CubiomesHandle_c_1isViableMonument
-00000000000005c4 T _Java_OceanMonumentCoords_00024CubiomesSupport_00024CubiomesHandle_c_1isViableMonumentBatch
+nm -gD libcubiomeswrap.so | grep -i Java_
 ```
 
-This means the library did export the JNI entrypoints. Otherwise, Java will fail with `UnsatisfiedLinkError`.
+**Windows (MSYS2):**
+```bash
+nm -g libcubiomeswrap.dll | grep -i Java_
+```
 
-Verify that `libcubiomeswrap.dylib` exists by checking the folder. If it is present, then you created Cubiomes oracle.
+You should see symbols like `Java_OceanMonumentCoords_...`. If you don’t, Java will fail with `UnsatisfiedLinkError`.
 
----
+> Note: Release ZIPs include the native library already, so you only need this section when building from source.
 
-## Running DoubleTripleQuadMonumentFinder
+#### B2) Compiling Java
 
-First, compile Java to create classes:
+If you’re developing locally (without Gradle), you can compile the Java files directly:
+
 ```bash
 javac Main.java OceanMonumentCoords.java AFKSpotFinder.java MaximumCoverageAFK.java
 ```
-Then once it is successful, run Main:
+
+Then run:
 
 ```bash
 java Main <seed> <type> <rangeBlocks> <excludeRadius> <threads>
 ```
 
-### Arguments
+(If you are just a user, prefer **Release ZIP** and run `java -jar DoubleTripleQuadMonumentFinder.jar ...`.)
+
+#### B3) Arguments
 
 All 5 arguments are required. 
 
@@ -290,7 +422,7 @@ This means we are searching for AFK points with triple monuments. The AFK spot i
 
 ## Calculating Portal Coordinates
 
-**Warning: make sure you test this before building the farms.** If you are building portal-based guardian farms, each of which covers the entire bounding box, then here are the steps:
+**Warning: Make sure you test this in creative before building the farms in survival.** If you are building portal-based guardian farms, each of which covers the entire bounding box, then here are the steps:
 
 1. Choose the first entry that has the maximum coverage (and if there is a tie, then it selects the closest to the origin).
 2. The nether coordinate that converges overworld ocean monuments' portals to it is the `netherX` and `netherZ` value for x and z coordinates respectively. You can ignore the y value, depending on your context. 
@@ -357,6 +489,9 @@ However, if you intend to collect items in the overworld side (Guardians telepor
 As always, **test this in creative.**
 
 5. **You mentioned portal-based guardian farms. Which one do you recommend:** check this one: https://discord.com/channels/1161803566265143306/1444281607254183988/1444281607254183988. You might want to create a Discord account and join the TMC Catalogue server to get the schematics and world download. 
+
+**Note**: I had not tried it. If you encounter problems or need help, you will have to ask within the server, not me.
+
 6. **I noticed I am getting a heap error:** there are two cases:
 	- If you are searching for double monuments, **only search at a range of 50,000 blocks radius,** as you are guaranteed to have one AFK point that has a maximum coverage.
 		- If that did not work, try to partition your search in a small square, then in concentric rings (for example, a square with radius 20,000 blocks ➡️ square radius of 40,000 blocks and excluding square radius of 20,000 blocks ➡️ square radius of 50,000 blocks and excluding square radius of 40,000 blocks). Take notes on `results.csv`, as successful searches overwrite it. 

@@ -207,9 +207,8 @@ public class OceanMonumentCoords {
             }
 
             void isViableMonumentChunks(int[] chunkXs, int[] chunkZs, byte[] outFlags, int n) {
-                if (n <= 0)
-                    return;
-                c_isViableMonumentBatch(ptr, chunkXs, chunkZs, outFlags);
+                if (n <= 0) return;
+                c_isViableMonumentBatch(ptr, chunkXs, chunkZs, outFlags, n);
             }
 
             @Override
@@ -218,48 +217,104 @@ public class OceanMonumentCoords {
             }
 
             private static void loadNativeOnce() {
-                if (LOADED)
-                    return;
+                if (LOADED) return;
                 synchronized (CubiomesHandle.class) {
-                    if (LOADED)
-                        return;
+                    if (LOADED) return;
+
+                    final boolean debug = Boolean.getBoolean("monuments.cubiomes.debug");
 
                     // IMPORTANT: System.loadLibrary() expects the *base* name.
-                    // On macOS, loadLibrary("cubiomeswrap") resolves to "libcubiomeswrap.dylib".
-                    // Do NOT include the "lib" prefix in the base name.
+                    // On macOS/Linux, loadLibrary("cubiomeswrap") resolves to lib...(.dylib|.so).
+                    // On Windows, it resolves to ...(.dll).
                     List<String> baseNames = Arrays.asList(
                             "cubiomeswrap",
-                            "cubiomes_wrap");
+                            "cubiomes_wrap"
+                    );
 
                     UnsatisfiedLinkError last = null;
 
-                    // 1) Try normal library resolution (java.library.path, DYLD paths, etc.)
+                    // 1) Try normal library resolution (java.library.path, DYLD/LD paths, etc.)
                     for (String n : baseNames) {
                         try {
+                            if (debug) System.err.println("[cubiomes] trying System.loadLibrary(\"" + n + "\")");
                             System.loadLibrary(n);
                             LOADED = true;
                             return;
                         } catch (UnsatisfiedLinkError e) {
                             last = e;
+                            if (debug) System.err.println("[cubiomes] loadLibrary failed: " + e.getMessage());
                         }
                     }
 
-                    // 2) Fallback: if the dylib sits next to the jar / in the current working
-                    // directory.
-                    // This is your most common dev setup: ./libcubiomeswrap.dylib
-                    try {
-                        String cwd = System.getProperty("user.dir");
-                        String p = new java.io.File(cwd, "libcubiomeswrap.dylib").getAbsolutePath();
-                        System.load(p);
-                        LOADED = true;
-                        return;
-                    } catch (UnsatisfiedLinkError e) {
-                        last = e;
+                    // 2) Fallback: try explicit paths in common locations.
+                    // This is the most common layout for packaged zips: native library next to the jar
+                    // (or in ./native, ./lib, ./libs).
+                    // You can also override with: -Dmonuments.nativeDir=/path/to/dir
+
+                    // Candidate file names to try (OS-specific via System.mapLibraryName).
+                    // mapLibraryName("cubiomeswrap") => "libcubiomeswrap.dylib" (mac), "libcubiomeswrap.so" (linux), "cubiomeswrap.dll" (win)
+                    List<String> fileNames = new ArrayList<>();
+                    for (String n : baseNames) {
+                        fileNames.add(System.mapLibraryName(n));
+                    }
+                    // Also try the canonical mac name if users built it that way.
+                    // (System.mapLibraryName already covers this, but keeping as a harmless extra.)
+                    if (!fileNames.contains("libcubiomeswrap.dylib")) fileNames.add("libcubiomeswrap.dylib");
+
+                    // Directories to search
+                    List<java.io.File> dirs = new ArrayList<>();
+
+                    // Optional explicit override
+                    String overrideDir = System.getProperty("monuments.nativeDir");
+                    if (overrideDir != null && !overrideDir.isBlank()) {
+                        dirs.add(new java.io.File(overrideDir));
                     }
 
-                    // If nothing worked, throw the last link error.
-                    if (last != null)
-                        throw last;
+                    // Current working directory (when running from source or from an extracted zip)
+                    java.io.File cwd = new java.io.File(System.getProperty("user.dir"));
+                    dirs.add(cwd);
+                    dirs.add(new java.io.File(cwd, "native"));
+                    dirs.add(new java.io.File(cwd, "lib"));
+                    dirs.add(new java.io.File(cwd, "libs"));
+
+                    // Directory containing the jar (when running: java -jar ...)
+                    java.io.File jarDir = null;
+                    try {
+                        java.net.URL url = OceanMonumentCoords.class.getProtectionDomain().getCodeSource().getLocation();
+                        java.io.File loc = new java.io.File(url.toURI());
+                        jarDir = loc.isFile() ? loc.getParentFile() : loc;
+                    } catch (Throwable ignored) {
+                        // ignore
+                    }
+                    if (jarDir != null) {
+                        dirs.add(jarDir);
+                        dirs.add(new java.io.File(jarDir, "native"));
+                        dirs.add(new java.io.File(jarDir, "lib"));
+                        dirs.add(new java.io.File(jarDir, "libs"));
+                    }
+
+                    // Try each (dir, filename)
+                    for (java.io.File d : dirs) {
+                        if (d == null) continue;
+                        for (String fn : fileNames) {
+                            try {
+                                java.io.File f = new java.io.File(d, fn);
+                                if (!f.exists()) continue;
+                                String abs = f.getAbsolutePath();
+                                if (debug) System.err.println("[cubiomes] trying System.load(\"" + abs + "\")");
+                                System.load(abs);
+                                LOADED = true;
+                                return;
+                            } catch (UnsatisfiedLinkError e) {
+                                last = e;
+                                if (debug) System.err.println("[cubiomes] load failed: " + e.getMessage());
+                            }
+                        }
+                    }
+
+                    // If nothing worked, throw the last link error (or a generic one).
+                    if (last != null) throw last;
+                    throw new UnsatisfiedLinkError("Failed to load cubiomes native library (tried loadLibrary + common paths)");
                 }
             }
 
@@ -269,7 +324,7 @@ public class OceanMonumentCoords {
             private static native int c_isViableMonument(long handle, int chunkX, int chunkZ);
 
             private static native void c_isViableMonumentBatch(long handle, int[] chunkXs, int[] chunkZs,
-                    byte[] outFlags);
+                    byte[] outFlags, int n);
 
             private static native void c_free(long handle);
         }
