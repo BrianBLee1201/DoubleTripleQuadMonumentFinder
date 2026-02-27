@@ -138,9 +138,9 @@ To reduce any potential errors such as `command not found`, download the require
 - **[Git](https://git-scm.com/install/windows)** (required for cloning the repository and submodules)
 
 - **C/C++ toolchain** (required to compile the native cubiomes JNI wrapper)
-	- macOS: Xcode Command Line Tools (clang)
+	- macOS: clang
 	- Linux: clang or gcc
-	- Windows: MSYS2 MinGW64
+	- Windows: [MSYS2 MinGW64](https://www.mingw-w64.org/)
 
 ---
 
@@ -236,17 +236,7 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64   # adjust if different
 export CUBIOMES_DIR="$PWD/external/cubiomes"
 ```
 
-**Windows (PowerShell):**
-```powershell
-$env:JAVA_HOME = "C:\\Program Files\\Java\\jdk-22"   # adjust if different
-$env:CUBIOMES_DIR = "$PWD\\external\\cubiomes"
-```
-
-**Windows (CMD):**
-```bat
-set JAVA_HOME=C:\Program Files\Java\jdk-22
-set CUBIOMES_DIR=%cd%\external\cubiomes
-```
+**Windows is different, as they do not support certain UNIX commands.**
 
 ##### B1c) Build the native library
 
@@ -296,12 +286,19 @@ clang -shared -O2 -fPIC \
 pacman -Syu
 pacman -S --needed mingw-w64-x86_64-clang mingw-w64-x86_64-binutils make git
 ```
-3) Set env vars (MSYS2 bash):
+3) Change directory to the DoubleTripleQuadMonumentFinder repo:
+
+```bash
+cd /c/Users/<PATH_TO>/DoubleTripleQuadMonumentFinder
+```
+
+4) Set env vars (MSYS2 bash):
 ```bash
 export JAVA_HOME="C:/Program Files/Java/jdk-22"   # adjust if different
 export CUBIOMES_DIR="$PWD/external/cubiomes"
 ```
-4) Build:
+
+5) Build:
 ```bash
 clang -shared -O2 -fPIC \
   -I"$JAVA_HOME/include" \

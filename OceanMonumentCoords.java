@@ -224,9 +224,9 @@ public class OceanMonumentCoords {
                     final boolean debug = Boolean.getBoolean("monuments.cubiomes.debug");
 
                     // IMPORTANT: System.loadLibrary() expects the *base* name.
-                    // On macOS/Linux, loadLibrary("cubiomeswrap") resolves to lib...(.dylib|.so).
-                    // On Windows, it resolves to ...(.dll).
-                    List<String> baseNames = Arrays.asList(
+                    // - macOS/Linux: loadLibrary("cubiomeswrap") => libcubiomeswrap.(dylib|so)
+                    // - Windows:     loadLibrary("cubiomeswrap") => cubiomeswrap.dll
+                    final List<String> baseNames = Arrays.asList(
                             "cubiomeswrap",
                             "cubiomes_wrap"
                     );
@@ -247,22 +247,26 @@ public class OceanMonumentCoords {
                     }
 
                     // 2) Fallback: try explicit paths in common locations.
-                    // This is the most common layout for packaged zips: native library next to the jar
-                    // (or in ./native, ./lib, ./libs).
-                    // You can also override with: -Dmonuments.nativeDir=/path/to/dir
-
-                    // Candidate file names to try (OS-specific via System.mapLibraryName).
-                    // mapLibraryName("cubiomeswrap") => "libcubiomeswrap.dylib" (mac), "libcubiomeswrap.so" (linux), "cubiomeswrap.dll" (win)
-                    List<String> fileNames = new ArrayList<>();
+                    // Candidate file names to try (OS-specific via System.mapLibraryName) plus common alternates.
+                    final LinkedHashSet<String> fileNames = new LinkedHashSet<>();
                     for (String n : baseNames) {
-                        fileNames.add(System.mapLibraryName(n));
+                        String mapped = System.mapLibraryName(n);
+                        fileNames.add(mapped);
+
+                        // Some toolchains build with an extra 'lib' prefix even on Windows.
+                        if (!mapped.startsWith("lib")) {
+                            fileNames.add("lib" + mapped);
+                        }
                     }
-                    // Also try the canonical mac name if users built it that way.
-                    // (System.mapLibraryName already covers this, but keeping as a harmless extra.)
-                    if (!fileNames.contains("libcubiomeswrap.dylib")) fileNames.add("libcubiomeswrap.dylib");
+
+                    // Common canonical names (helps when users rename artifacts manually).
+                    fileNames.add("libcubiomeswrap.dylib");
+                    fileNames.add("libcubiomeswrap.so");
+                    fileNames.add("cubiomeswrap.dll");
+                    fileNames.add("libcubiomeswrap.dll");
 
                     // Directories to search
-                    List<java.io.File> dirs = new ArrayList<>();
+                    final ArrayList<java.io.File> dirs = new ArrayList<>();
 
                     // Optional explicit override
                     String overrideDir = System.getProperty("monuments.nativeDir");
@@ -270,17 +274,17 @@ public class OceanMonumentCoords {
                         dirs.add(new java.io.File(overrideDir));
                     }
 
-                    // Current working directory (when running from source or from an extracted zip)
+                    // Current working directory (when running from source or extracted zip)
                     java.io.File cwd = new java.io.File(System.getProperty("user.dir"));
                     dirs.add(cwd);
                     dirs.add(new java.io.File(cwd, "native"));
                     dirs.add(new java.io.File(cwd, "lib"));
                     dirs.add(new java.io.File(cwd, "libs"));
 
-                    // Directory containing the jar (when running: java -jar ...)
+                    // Directory containing the jar/classpath entry (when running: java -jar ...)
                     java.io.File jarDir = null;
                     try {
-                        java.net.URL url = OceanMonumentCoords.class.getProtectionDomain().getCodeSource().getLocation();
+                        java.net.URL url = CubiomesHandle.class.getProtectionDomain().getCodeSource().getLocation();
                         java.io.File loc = new java.io.File(url.toURI());
                         jarDir = loc.isFile() ? loc.getParentFile() : loc;
                     } catch (Throwable ignored) {
@@ -297,13 +301,14 @@ public class OceanMonumentCoords {
                     for (java.io.File d : dirs) {
                         if (d == null) continue;
                         for (String fn : fileNames) {
+                            java.io.File f = new java.io.File(d, fn);
+                            if (!f.isFile()) continue;
+                            String abs = f.getAbsolutePath();
                             try {
-                                java.io.File f = new java.io.File(d, fn);
-                                if (!f.exists()) continue;
-                                String abs = f.getAbsolutePath();
                                 if (debug) System.err.println("[cubiomes] trying System.load(\"" + abs + "\")");
                                 System.load(abs);
                                 LOADED = true;
+                                if (debug) System.err.println("[cubiomes] loaded: " + abs);
                                 return;
                             } catch (UnsatisfiedLinkError e) {
                                 last = e;
